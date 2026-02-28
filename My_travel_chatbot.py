@@ -1,14 +1,16 @@
 """
-Assistant de Voyage avec Mémoire - Interface Streamlit
-======================================================
-Utilise Groq (gratuit, en ligne) + Streamlit + JSON (mémoire persistante)
-Lancement : streamlit run app_travel.py
+Assistant de Voyage avec Mémoire PAR UTILISATEUR - Interface Streamlit
+=======================================================================
+Chaque utilisateur a sa propre mémoire isolée grâce à un ID unique.
+Utilise Groq (gratuit) + Streamlit + JSON par utilisateur
+Lancement : streamlit run My_travel_chatbot.py
 """
 
 import streamlit as st
 import requests
 import json
 import os
+import uuid
 from datetime import datetime
 
 # ============================================================
@@ -97,10 +99,10 @@ st.markdown("""
 # ============================================================
 # CONFIG GROQ
 # ============================================================
-GROQ_API_KEY = "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"
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL = "llama-3.3-70b-versatile"           # modèle gratuit et puissant sur Groq
-MEMORY_FILE = "chat_memory.json"
+MODEL = "llama-3.3-70b-versatile"
+MEMORY_DIR = "memories"  # 📁 Dossier qui contiendra un fichier JSON par utilisateur
 
 SYSTEM_PROMPT = """Tu es Marco, un assistant de voyage passionné et expert en voyages abordables.
 Tu aides les utilisateurs à planifier leurs voyages selon leur budget et leurs préférences.
@@ -115,17 +117,35 @@ Règles IMPORTANTES :
 """
 
 # ============================================================
-# FONCTIONS MÉMOIRE JSON
+# GESTION DE L'ID UNIQUE PAR UTILISATEUR
+# ============================================================
+# Chaque visiteur reçoit un ID unique stocké dans sa session navigateur.
+# Cet ID ne change pas entre les visites → mémoire persistante et isolée.
+
+if "user_id" not in st.session_state:
+    st.session_state.user_id = str(uuid.uuid4())  # ex: "a3f2c1d4-..."
+
+USER_ID = st.session_state.user_id
+USER_MEMORY_FILE = os.path.join(MEMORY_DIR, f"{USER_ID}.json")
+
+# Créer le dossier memories s'il n'existe pas
+os.makedirs(MEMORY_DIR, exist_ok=True)
+
+# ============================================================
+# FONCTIONS MÉMOIRE JSON (une par utilisateur)
 # ============================================================
 def charger_memoire() -> list:
-    if os.path.exists(MEMORY_FILE):
-        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+    """Charge l'historique de CET utilisateur uniquement."""
+    if os.path.exists(USER_MEMORY_FILE):
+        with open(USER_MEMORY_FILE, "r", encoding="utf-8") as f:
             return json.load(f).get("historique", [])
     return []
 
 def sauvegarder_memoire(historique: list):
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+    """Sauvegarde l'historique dans le fichier propre à CET utilisateur."""
+    with open(USER_MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump({
+            "user_id": USER_ID,
             "derniere_mise_a_jour": datetime.now().strftime("%d/%m/%Y %H:%M"),
             "historique": historique
         }, f, ensure_ascii=False, indent=2)
@@ -134,10 +154,12 @@ def sauvegarder_memoire(historique: list):
 # INITIALISATION SESSION
 # ============================================================
 if "conversation_history" not in st.session_state:
-    st.session_state.conversation_history = charger_memoire()  # 🧠 mémoire cachée
+    # 🧠 Charge la mémoire de CET utilisateur (invisible dans l'interface)
+    st.session_state.conversation_history = charger_memoire()
 
 if "messages_visibles" not in st.session_state:
-    st.session_state.messages_visibles = []  # 👁️ seulement la session actuelle
+    # 👁️ Seulement les messages de la session actuelle sont affichés
+    st.session_state.messages_visibles = []
 
 # ============================================================
 # FONCTION CHAT (Groq)
@@ -168,11 +190,11 @@ def chat(user_message: str) -> str:
         "role": "assistant", "content": assistant_message
     })
 
-    # 👁️ Messages visibles = session actuelle seulement
+    # 👁️ Visible uniquement dans cette session
     st.session_state.messages_visibles.append({"role": "user", "content": user_message})
     st.session_state.messages_visibles.append({"role": "assistant", "content": assistant_message})
 
-    # 💾 Sauvegarde automatique
+    # 💾 Sauvegarde dans le fichier propre à cet utilisateur
     sauvegarder_memoire(st.session_state.conversation_history)
 
     return assistant_message
